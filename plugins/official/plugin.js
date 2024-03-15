@@ -1,4 +1,4 @@
-const plugin_version = '2022-0119-1745'
+const plugin_version = '2022-0908-1700'
 const plugin_name    = 'official'
 const plugin_desc    = '官方插件'
 
@@ -464,8 +464,17 @@ var algorithmConfig = {
             'java.lang.Shutdown',
             'java.io.File',
             'javax.script.ScriptEngineManager',
+            'excludedClasses',
+            'excludedPackageNamePatterns',
+            'excludedPackageNames',
             'com.opensymphony.xwork2.ActionContext'
         ]
+    },
+    // OGNL 表达式长度限制
+    ognl_length_limit: {
+        name: '算法2 - OGNL表达式长度限制',
+        action: 'log',
+        max_length: 400
     },
 
     // 命令执行 - java 反射、反序列化，php eval 等方式
@@ -484,7 +493,7 @@ var algorithmConfig = {
     command_common: {
         name:    '算法3 - 识别常用渗透命令（探针）',
         action:  'log',
-        pattern: 'cat.{1,5}/etc/passwd|nc.{1,30}-e.{1,100}/bin/(?:ba)?sh|bash\\s-.{0,4}i.{1,20}/dev/tcp/|subprocess.call\\(.{0,6}/bin/(?:ba)?sh|fsockopen\\(.{1,50}/bin/(?:ba)?sh|perl.{1,80}socket.{1,120}open.{1,80}exec\\(.{1,5}/bin/(?:ba)?sh'
+        pattern: 'cat.{1,5}/etc/passwd|nc.{1,30}-e.{1,100}/bin/(?:ba)?sh|bash\\s-.{0,4}i.{1,20}/dev/tcp/|subprocess.call\\(.{0,6}/bin/(?:ba)?sh|fsockopen\\(.{1,50}/bin/(?:ba)?sh|perl.{1,80}socket.{1,120}open.{1,80}exec\\(.{1,5}/bin/(?:ba)?sh|\\{echo,.{10,400}{base64,-d}'
     },
     // 命令执行 - 语法错误和敏感操作
     command_error: {
@@ -691,7 +700,7 @@ var forcefulBrowsing = {
 var headerInjection = ["user-agent", "referer", "x-forwarded-for"]
 
 // 如果你配置了非常规的扩展名映射，比如让 .abc 当做PHP脚本执行，那你可能需要增加更多扩展名
-var scriptFileRegex = /\.(aspx?|jspx?|php[345]?|phar|phtml|sh|py|pl|rb)\.?$/i
+var scriptFileRegex = /\.(aspx?|jspx?|php[345]?|phar|phtml|sh|py|pl|rb|so|dll|dylib)\.?$/i
 
 // 正常文件
 var cleanFileRegex  = /\.(jpg|jpeg|png|gif|bmp|txt|rar|zip)$/i
@@ -718,7 +727,7 @@ var internalRegex   = /^(0\.0\.0|127|10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\./
 var whiteHostName   = /\.bcebos\.com$|(^|\.)oss-[\d\w\-]{0,30}\.aliyuncs\.com$/
 
 var dnsLogDomains   = [
-    '.vuleye.pw', '.ceye.io', '.exeye.io', '.vcap.me', '.xip.name', '.xip.io', '.sslip.io', '.nip.io',
+    '.vuleye.pw', '.ceye.io', '.exeye.io', '.vcap.me', '.xip.name', '.xip.io', '.sslip.io', '.nip.io', '.oastify.com', '.eyes.sh',
     '.burpcollaborator.net', '.tu4.org', '.2xss.cc', '.bxss.me', '.godns.vip', '.dnslog.cn', '.0kee.360.cn', '.r87.me','.ngrok.io',
     // yumusb/DNSLog-Platform-Golang
     '.xn--9tr.com', 
@@ -727,7 +736,9 @@ var dnsLogDomains   = [
     // 端口转发工具
     '.vxtrans.com', '.vxtrans.link',
     // 免费DDNS厂商
-    '.hopto.org', '.zapto.org', '.sytes.net', '.ddns.net'
+    '.hopto.org', '.zapto.org', '.sytes.net', '.ddns.net',
+    // 其他
+    '.canarytokens.com'
 ]
 
 // SQL注入算法1 - 预过滤正则
@@ -914,6 +925,20 @@ function is_hostname_dnslog(hostname) {
 //     return false
 // }
 
+function is_method_from_rasp(stack) {
+    // 检查栈顶 -> rasp堆栈之间，是否包含用户代码，即非 JDK相关的函数
+    for (; i < stacks.length; i ++) {
+        var method = stacks[i]                
+        if (! method.startsWith('java.') 
+            && !method.startsWith('sun.') 
+            && !method.startsWith('com.sun.'))
+        {
+            return false
+        }
+    }
+    return true
+}
+
 function validate_stack_java(stacks) {
     var known    = {
         'com.thoughtworks.xstream.XStream.unmarshal':                                   "Using xstream library",
@@ -972,6 +997,11 @@ function validate_stack_java(stacks) {
 
         if (method.startsWith('ysoserial.Pwner')) {
             message = "Using YsoSerial tool"
+            break
+        }
+
+        if (method.startsWith('org.su18')) {
+            message = "Using ysuserial tool"
             break
         }
 
@@ -2103,7 +2133,7 @@ plugin.register('directory', function (params, context) {
                 algorithm:  'directory_reflect'
             }
         }
-        else if (language == 'java' && validate_stack_java(params.stack))
+        else if (language == 'java' && validate_stack_java(params.stack) && !is_method_from_rasp(params.stack))
         {
             return {
                 action:     algorithmConfig.directory_reflect.action,
@@ -2983,10 +3013,12 @@ plugin.register('loadLibrary', function(params, context) {
     return clean
 })
 
-if (algorithmConfig.ognl_blacklist.action != 'ignore')
-{
-    // 默认情况下，当OGNL表达式长度超过30才会进入检测点，此长度可配置
-    plugin.register('ognl', function (params, context) {
+// 默认情况下，当OGNL表达式长度超过30才会进入检测点，此长度可配置
+plugin.register('ognl', function (params, context) {
+
+    // 算法1: OGNL语句黑名单
+    if (algorithmConfig.ognl_blacklist.action != 'ignore')
+    {
         var ognlExpression = params.expression
         for (var index in algorithmConfig.ognl_blacklist.expression)
         {
@@ -3001,10 +3033,25 @@ if (algorithmConfig.ognl_blacklist.action != 'ignore')
             }
 
         }
+    }
 
-        return clean
-    })
-}
+    // 算法2: OGNL表达式长度限制
+    if (algorithmConfig.ognl_length_limit.action != 'ignore')
+    {
+        var ognlLength = params.expression.length
+        if (ognlLength > algorithmConfig.ognl_length_limit.max_length)
+        {
+            return {
+                action:     algorithmConfig.ognl_length_limit.action,
+                message:    _("OGNL exec - Trying to execute a OGNL expression of unusual length: " + ognlLength),
+                confidence: 100,
+                algorithm:  'ognl_length_limit'
+            }
+        }
+    }
+
+    return clean
+})
 
 if (algorithmConfig.jndi_disable_all.action != 'ignore') 
 {
@@ -3142,7 +3189,7 @@ if (algorithmConfig.response_dataLeak.action != 'ignore') {
         var items = [], parts = []
 
         // content-type 过滤
-        if ( ! content_type && ! dataLeakContentType.test(content_type)) {
+        if ( ! content_type || ! dataLeakContentType.test(content_type)) {
             return clean
         }
 

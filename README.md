@@ -34,7 +34,7 @@ We've fully tested OpenRASP on the following application servers for Linux platf
   * IBM WebSphpere 8.5, 9.0
   * WebLogic 10.3.6, 12.2.1
 * PHP
-  * 5.3-5.6, 7.0-7.3
+  * 5.3-5.6, 7.0-7.4
 
 The support of other web application servers will also be soon included in the coming releases.
 
@@ -44,7 +44,7 @@ We ran multiple intense and long-lasting stress tests prior to release. Even in 
 
 #### 3. Integration with existing SIEM or SOC
 
-OpenRASP logs alarms in JSON format, which can be easily picked up by LogStash, rsyslog or Flume.
+OpenRASP logs alarms in JSON format, which can be easily picked up by Logstash, rsyslog or Flume.
 
 #### 4. How to develop a new plugin?
 
@@ -63,7 +63,6 @@ Technical support:
 Business inquires, comments and security reports:
 
 * General email: `openrasp-support # baidu.com`
-
 
 
 
